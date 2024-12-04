@@ -95,8 +95,8 @@ int rwlock_read_lock(rwlock_t *rw)
 /*---------------------------------------------------------------------------*/
 int rwlock_read_unlock(rwlock_t *rw)
 {
-    TRACE_PRINT();
     sleep(rw->delay);
+    TRACE_PRINT();
 /*---------------------------------------------------------------------------*/
     /* edit here */
 
@@ -128,8 +128,8 @@ int rwlock_write_lock(rwlock_t *rw)
 /*---------------------------------------------------------------------------*/
 int rwlock_write_unlock(rwlock_t *rw)
 {
-    TRACE_PRINT();
     sleep(rw->delay);
+    TRACE_PRINT();
 /*---------------------------------------------------------------------------*/
     /* edit here */
 

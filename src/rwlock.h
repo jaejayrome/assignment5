@@ -15,13 +15,13 @@
 /*---------------------------------------------------------------------------*/
 typedef struct
 {
-    int read_count;         // number of current read thread
-    int write_count;        // number of write thread
+    int read_count;         // number of current/pending read threads
+    int write_count;        // number of write threads
     pthread_mutex_t lock;   // mutex lock for protection
     pthread_cond_t readers; // condvar for threads waiting read
     pthread_cond_t writers; // condvar for threads waiting write
 
-    /* writer ring */
+    /* pending writer ring */
     pthread_t *writer_ring; // thread IDs array
     int writer_ring_head;   // position to insert
     int writer_ring_tail;   // position to evict
