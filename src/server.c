@@ -43,7 +43,9 @@ void *handle_client(void *arg)
     struct sockaddr_storage client_addr;
     socklen_t addr_size = sizeof(client_addr);
     int client_fd;
-
+    char rbuf[BUFFER_SIZE];
+    ssize_t n;
+    const char *resp;
     /*---------------------------------------------------------------------------*/
 
     free(args);
@@ -62,7 +64,19 @@ void *handle_client(void *arg)
             break;
         }
 
-        /* Handle client connection here */
+        /* Handle client requests */
+        while ((n = read(client_fd, rbuf, BUFFER_SIZE)) > 0)
+        {
+            /* Process the request using skvs_serve */
+            resp = skvs_serve(ctx, rbuf, n);
+            if (resp)
+            {
+                /* Add line feed to response */
+                write(client_fd, resp, strlen(resp));
+                write(client_fd, "\n", 1);
+            }
+        }
+
         close(client_fd);
     }
     /*---------------------------------------------------------------------------*/
