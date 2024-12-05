@@ -23,10 +23,10 @@ struct thread_args
     int idx;
     struct skvs_ctx *ctx;
 
-/*---------------------------------------------------------------------------*/
+    /*---------------------------------------------------------------------------*/
     /* free to use */
 
-/*---------------------------------------------------------------------------*/
+    /*---------------------------------------------------------------------------*/
 };
 /*---------------------------------------------------------------------------*/
 volatile static sig_atomic_t g_shutdown = 0;
@@ -38,27 +38,34 @@ void *handle_client(void *arg)
     struct skvs_ctx *ctx = args->ctx;
     int idx = args->idx;
     int listenfd = args->listenfd;
-/*---------------------------------------------------------------------------*/
+    /*---------------------------------------------------------------------------*/
     /* free to declare any variables */
-    
+    struct sockaddr_storage client_addr;
+    socklen_t addr_size = sizeof(client_addr);
+    int client_fd;
 
-/*---------------------------------------------------------------------------*/
+    /*---------------------------------------------------------------------------*/
 
     free(args);
     printf("%dth worker ready\n", idx);
 
-/*---------------------------------------------------------------------------*/
+    /*---------------------------------------------------------------------------*/
     /* edit here */
-    
+    while (!g_shutdown)
+    {
+        client_fd = accept(listenfd, (struct sockaddr *)&client_addr, &addr_size);
+        if (client_fd == -1)
+        {
+            if (errno == EINTR)
+                continue;
+            perror("accept");
+            break;
+        }
 
-
-
-
-
-
-
-    
-/*---------------------------------------------------------------------------*/
+        /* Handle client connection here */
+        close(client_fd);
+    }
+    /*---------------------------------------------------------------------------*/
 
     return NULL;
 }
@@ -78,12 +85,14 @@ int main(int argc, char *argv[])
     int port = DEFAULT_PORT, opt;
     int num_threads = NUM_THREADS;
     int delay = RWLOCK_DELAY;
-/*---------------------------------------------------------------------------*/
+    /*---------------------------------------------------------------------------*/
     /* free to declare any variables */
-
-
-    
-/*---------------------------------------------------------------------------*/
+    int listenfd;
+    struct sockaddr_in server_addr;
+    pthread_t *workers;
+    struct skvs_ctx *ctx;
+    int i, yes = 1;
+    /*---------------------------------------------------------------------------*/
 
     /* parse command line options */
     while ((opt = getopt(argc, argv, "p:t:s:d:h")) != -1)
@@ -122,18 +131,93 @@ int main(int argc, char *argv[])
         }
     }
 
-/*---------------------------------------------------------------------------*/
+    /*---------------------------------------------------------------------------*/
     /* edit here */
-    
+    /* Set up signal handler */
+    signal(SIGINT, handle_sigint);
 
+    /* Initialize SKVS context */
+    ctx = skvs_init(hash_size, delay);
+    if (!ctx)
+    {
+        perror("skvs_init failed");
+        exit(EXIT_FAILURE);
+    }
 
+    /* Create socket */
+    listenfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (listenfd < 0)
+    {
+        perror("socket creation failed");
+        exit(EXIT_FAILURE);
+    }
 
+    /* Set socket options */
+    if (setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) == -1)
+    {
+        perror("setsockopt");
+        exit(EXIT_FAILURE);
+    }
 
+    /* Configure server address */
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_addr.s_addr = inet_addr(ip);
+    server_addr.sin_port = htons(port);
 
+    /* Bind */
+    if (bind(listenfd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0)
+    {
+        perror("bind failed");
+        exit(EXIT_FAILURE);
+    }
 
+    /* Listen */
+    if (listen(listenfd, NUM_BACKLOG) < 0)
+    {
+        perror("listen failed");
+        exit(EXIT_FAILURE);
+    }
 
-    
-/*---------------------------------------------------------------------------*/
+    /* Create worker threads */
+    workers = malloc(sizeof(pthread_t) * num_threads);
+    if (!workers)
+    {
+        perror("malloc failed");
+        exit(EXIT_FAILURE);
+    }
+
+    /* Start worker threads */
+    for (i = 0; i < num_threads; i++)
+    {
+        struct thread_args *args = malloc(sizeof(struct thread_args));
+        if (!args)
+        {
+            perror("malloc failed");
+            exit(EXIT_FAILURE);
+        }
+        args->listenfd = listenfd;
+        args->idx = i;
+        args->ctx = ctx;
+
+        if (pthread_create(&workers[i], NULL, handle_client, args) != 0)
+        {
+            perror("pthread_create failed");
+            exit(EXIT_FAILURE);
+        }
+    }
+
+    /* Wait for threads to finish */
+    for (i = 0; i < num_threads; i++)
+    {
+        pthread_join(workers[i], NULL);
+    }
+
+    /* Clean up */
+    close(listenfd);
+    free(workers);
+    skvs_destroy(ctx, 1);
+    /*---------------------------------------------------------------------------*/
 
     return 0;
 }
