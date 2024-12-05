@@ -24,7 +24,10 @@ int main(int argc, char *argv[])
 
 /*---------------------------------------------------------------------------*/
     /* free to declare any variables */
-    
+    struct addrinfo hints, *server_info, *p;
+    int sockfd = -1;
+    int status;
+    char port_str[6];
 /*---------------------------------------------------------------------------*/
 
     /* parse command line options */
@@ -59,13 +62,56 @@ int main(int argc, char *argv[])
 
 /*---------------------------------------------------------------------------*/
     /* edit here */
+    memset(&hints, 0, sizeof hints);
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
 
+    /* Convert port to string */
+    snprintf(port_str, sizeof(port_str), "%d", port);
 
+    /* Get address information */
+    if ((status = getaddrinfo(ip, port_str, &hints, &server_info)) != 0) {
+        fprintf(stderr, "getaddrinfo error: %s\n", gai_strerror(status));
+        exit(EXIT_FAILURE);
+    }
 
+    /* Walking the LinkedList */
+    for(p = server_info; p != NULL; p = p->ai_next) {
+        sockfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
+        if (sockfd == -1) {
+            perror("client: socket");
+            continue;
+        }
 
+        // if client is unable to connect to the server
+        if (connect(sockfd, p->ai_addr, p->ai_addrlen) == -1) {
+            close(sockfd);
+            perror("client: connect");
+            continue;
+        }
 
+        // break only when client is able to connct to the server
+        break;
+    }
 
+    /* Clean up address info */
+    freeaddrinfo(server_info);
 
+    /* Check if connection failed */
+    if (p == NULL) {
+        fprintf(stderr, "client: failed to connect\n");
+        exit(EXIT_FAILURE);
+    }
+
+    printf("Connected to %s:%d\n", ip, port);
+
+    /* Handle interactive mode */
+    if (interactive) {
+        printf("Running in interactive mode\n");
+    }
+
+    /* Clean up socket */
+    close(sockfd);
 /*---------------------------------------------------------------------------*/
 
     return 0;
