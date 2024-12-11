@@ -83,6 +83,8 @@ void *handle_client(void *arg)
                 write(client_fd, "\n", 1);
             }
         }
+
+        printf("Connection closed by client\n");
         close(client_fd);
     }
     /*---------------------------------------------------------------------------*/
@@ -287,13 +289,6 @@ int main(int argc, char *argv[])
     {
         printf("Shutting down server...\n");
         fflush(stdout);
-
-        /* Block signals during dump */
-        sigset_t tempset;
-        sigfillset(&tempset);
-        sigprocmask(SIG_BLOCK, &tempset, NULL);
-
-        hash_dump(ctx->table);
     }
 
     close(listenfd);
