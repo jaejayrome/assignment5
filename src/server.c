@@ -58,7 +58,7 @@ void *handle_client(void *arg)
         client_fd = accept(listenfd, (struct sockaddr *)&client_addr, &addr_size);
         if (client_fd == -1)
         {
-            if (errno == EINTR)
+            if (errno == EINTR || errno == EINVAL || errno == EBADF)
             {
                 /* Check if we're shutting down */
                 if (g_shutdown)
@@ -83,7 +83,6 @@ void *handle_client(void *arg)
                 write(client_fd, "\n", 1);
             }
         }
-        printf("Connection closed by client\n");
         close(client_fd);
     }
     /*---------------------------------------------------------------------------*/
@@ -162,14 +161,13 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
 
-    /* Set up signal handler */
-    struct sigaction sa;
-    memset(&sa, 0, sizeof(sa));
-    sa.sa_handler = handle_sigint;
-    sa.sa_flags = SA_RESTART;
-    if (sigaction(SIGINT, &sa, NULL) == -1)
+    /* Block SIGINT initially */
+    sigset_t mask;
+    sigemptyset(&mask);
+    sigaddset(&mask, SIGINT);
+    if (sigprocmask(SIG_BLOCK, &mask, NULL) == -1)
     {
-        perror("sigaction");
+        perror("sigprocmask");
         skvs_destroy(ctx, 1);
         exit(EXIT_FAILURE);
     }
@@ -226,7 +224,7 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
 
-    /* Start worker threads */
+    /* Start worker threads (SIGINT remains blocked in threads) */
     for (i = 0; i < num_threads; i++)
     {
         struct thread_args *args = malloc(sizeof(struct thread_args));
@@ -251,15 +249,32 @@ int main(int argc, char *argv[])
         }
     }
 
-    /* Wait for shutdown signal */
-    sigset_t wait_mask;
-    sigemptyset(&wait_mask);
-    sigaddset(&wait_mask, SIGINT);
-    int sig;
-    sigwait(&wait_mask, &sig);
+    /* Set up signal handler after threads are created */
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = handle_sigint;
+    sigemptyset(&sa.sa_mask);
+    if (sigaction(SIGINT, &sa, NULL) == -1)
+    {
+        perror("sigaction");
+        skvs_destroy(ctx, 1);
+        exit(EXIT_FAILURE);
+    }
 
-    /* Force shutdown the socket */
+    /* Unblock SIGINT in main thread */
+    if (sigprocmask(SIG_UNBLOCK, &mask, NULL) == -1)
+    {
+        perror("sigprocmask");
+        skvs_destroy(ctx, 1);
+        exit(EXIT_FAILURE);
+    }
+
+    /* Wait for shutdown signal */
+    pause();
+
+    /* Force shutdown after first SIGINT */
     shutdown(listenfd, SHUT_RDWR);
+    close(listenfd);
 
     /* Wait for threads to finish */
     for (i = 0; i < num_threads; i++)
@@ -267,14 +282,20 @@ int main(int argc, char *argv[])
         pthread_join(workers[i], NULL);
     }
 
-    /* Clean up */
+    /* Clean up - only call hash_dump once under g_shutdown */
     if (g_shutdown)
     {
         printf("Shutting down server...\n");
         fflush(stdout);
+
+        /* Block signals during dump */
+        sigset_t tempset;
+        sigfillset(&tempset);
+        sigprocmask(SIG_BLOCK, &tempset, NULL);
+
         hash_dump(ctx->table);
-        fflush(stdout);
     }
+
     close(listenfd);
     free(workers);
     skvs_destroy(ctx, 1);
