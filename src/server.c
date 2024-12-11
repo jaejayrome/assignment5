@@ -59,13 +59,18 @@ void *handle_client(void *arg)
         if (client_fd == -1)
         {
             if (errno == EINTR)
+            {
+                /* Check if we're shutting down */
+                if (g_shutdown)
+                    break;
                 continue;
+            }
             perror("accept");
             break;
         }
 
         /* Handle client requests */
-        while ((n = read(client_fd, rbuf, BUFFER_SIZE)) > 0)
+        while (!g_shutdown && (n = read(client_fd, rbuf, BUFFER_SIZE)) > 0)
         {
             /* Null terminate the received data */
             rbuf[n] = '\0';
@@ -149,9 +154,7 @@ int main(int argc, char *argv[])
 
     /*---------------------------------------------------------------------------*/
     /* edit here */
-    /* Set up signal handler */
-    signal(SIGINT, handle_sigint);
-
+    /* edit here */
     /* Initialize SKVS context */
     ctx = skvs_init(hash_size, delay);
     if (!ctx)
@@ -160,11 +163,23 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
 
+    /* Block SIGINT before creating threads */
+    sigset_t mask;
+    sigemptyset(&mask);
+    sigaddset(&mask, SIGINT);
+    if (sigprocmask(SIG_BLOCK, &mask, NULL) == -1)
+    {
+        perror("sigprocmask");
+        skvs_destroy(ctx, 1);
+        exit(EXIT_FAILURE);
+    }
+
     /* Create socket */
     listenfd = socket(AF_INET, SOCK_STREAM, 0);
     if (listenfd < 0)
     {
         perror("socket creation failed");
+        skvs_destroy(ctx, 1);
         exit(EXIT_FAILURE);
     }
 
@@ -172,6 +187,7 @@ int main(int argc, char *argv[])
     if (setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) == -1)
     {
         perror("setsockopt");
+        skvs_destroy(ctx, 1);
         exit(EXIT_FAILURE);
     }
 
@@ -185,6 +201,7 @@ int main(int argc, char *argv[])
     if (bind(listenfd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0)
     {
         perror("bind failed");
+        skvs_destroy(ctx, 1);
         exit(EXIT_FAILURE);
     }
 
@@ -192,6 +209,7 @@ int main(int argc, char *argv[])
     if (listen(listenfd, NUM_BACKLOG) < 0)
     {
         perror("listen failed");
+        skvs_destroy(ctx, 1);
         exit(EXIT_FAILURE);
     }
 
@@ -200,6 +218,7 @@ int main(int argc, char *argv[])
     if (!workers)
     {
         perror("malloc failed");
+        skvs_destroy(ctx, 1);
         exit(EXIT_FAILURE);
     }
 
@@ -210,6 +229,8 @@ int main(int argc, char *argv[])
         if (!args)
         {
             perror("malloc failed");
+            free(workers);
+            skvs_destroy(ctx, 1);
             exit(EXIT_FAILURE);
         }
         args->listenfd = listenfd;
@@ -219,8 +240,19 @@ int main(int argc, char *argv[])
         if (pthread_create(&workers[i], NULL, handle_client, args) != 0)
         {
             perror("pthread_create failed");
+            free(args);
+            free(workers);
+            skvs_destroy(ctx, 1);
             exit(EXIT_FAILURE);
         }
+    }
+
+    /* Unblock SIGINT after creating threads */
+    if (sigprocmask(SIG_UNBLOCK, &mask, NULL) == -1)
+    {
+        perror("sigprocmask");
+        skvs_destroy(ctx, 1);
+        exit(EXIT_FAILURE);
     }
 
     /* Wait for threads to finish */
@@ -230,6 +262,10 @@ int main(int argc, char *argv[])
     }
 
     /* Clean up */
+    if (g_shutdown)
+    {
+        hash_dump(ctx->table);
+    }
     close(listenfd);
     free(workers);
     skvs_destroy(ctx, 1);
