@@ -83,7 +83,7 @@ void *handle_client(void *arg)
                 write(client_fd, "\n", 1);
             }
         }
-
+        printf("Connection closed by client\n");
         close(client_fd);
     }
     /*---------------------------------------------------------------------------*/
@@ -211,6 +211,8 @@ int main(int argc, char *argv[])
         perror("listen failed");
         skvs_destroy(ctx, 1);
         exit(EXIT_FAILURE);
+    } else {
+        printf("Server listening on %s:%d\n", ip, port);
     }
 
     /* Create worker threads */

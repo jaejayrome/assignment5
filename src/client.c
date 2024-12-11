@@ -105,8 +105,8 @@ int main(int argc, char *argv[])
     if (interactive)
     {
         char line[BUFFER_SIZE];
-        printf("Connected to %s:%d (Interactive mode)\n", ip, port);
-        printf("Enter SKVS commands (CREATE/READ/UPDATE/DELETE <key> [value]):\n");
+        printf("Connected to %s:%d\n", ip, port);
+        printf("Enter command:\n");
 
         while (fgets(line, sizeof(line), stdin) != NULL)
         {
