@@ -154,7 +154,6 @@ int main(int argc, char *argv[])
 
     /*---------------------------------------------------------------------------*/
     /* edit here */
-    /* edit here */
     /* Initialize SKVS context */
     ctx = skvs_init(hash_size, delay);
     if (!ctx)
@@ -163,13 +162,14 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
 
-    /* Block SIGINT before creating threads */
-    sigset_t mask;
-    sigemptyset(&mask);
-    sigaddset(&mask, SIGINT);
-    if (sigprocmask(SIG_BLOCK, &mask, NULL) == -1)
+    /* Set up signal handler */
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = handle_sigint;
+    sa.sa_flags = SA_RESTART;
+    if (sigaction(SIGINT, &sa, NULL) == -1)
     {
-        perror("sigprocmask");
+        perror("sigaction");
         skvs_destroy(ctx, 1);
         exit(EXIT_FAILURE);
     }
@@ -211,7 +211,9 @@ int main(int argc, char *argv[])
         perror("listen failed");
         skvs_destroy(ctx, 1);
         exit(EXIT_FAILURE);
-    } else {
+    }
+    else
+    {
         printf("Server listening on %s:%d\n", ip, port);
     }
 
@@ -249,13 +251,15 @@ int main(int argc, char *argv[])
         }
     }
 
-    /* Unblock SIGINT after creating threads */
-    if (sigprocmask(SIG_UNBLOCK, &mask, NULL) == -1)
-    {
-        perror("sigprocmask");
-        skvs_destroy(ctx, 1);
-        exit(EXIT_FAILURE);
-    }
+    /* Wait for shutdown signal */
+    sigset_t wait_mask;
+    sigemptyset(&wait_mask);
+    sigaddset(&wait_mask, SIGINT);
+    int sig;
+    sigwait(&wait_mask, &sig);
+
+    /* Force shutdown the socket */
+    shutdown(listenfd, SHUT_RDWR);
 
     /* Wait for threads to finish */
     for (i = 0; i < num_threads; i++)
@@ -266,7 +270,10 @@ int main(int argc, char *argv[])
     /* Clean up */
     if (g_shutdown)
     {
+        printf("Shutting down server...\n");
+        fflush(stdout);
         hash_dump(ctx->table);
+        fflush(stdout);
     }
     close(listenfd);
     free(workers);
