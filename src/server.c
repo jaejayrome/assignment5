@@ -67,11 +67,13 @@ void *handle_client(void *arg)
         /* Handle client requests */
         while ((n = read(client_fd, rbuf, BUFFER_SIZE)) > 0)
         {
+            /* Null terminate the received data */
+            rbuf[n] = '\0';
+
             /* Process the request using skvs_serve */
             resp = skvs_serve(ctx, rbuf, n);
             if (resp)
             {
-                /* Add line feed to response */
                 write(client_fd, resp, strlen(resp));
                 write(client_fd, "\n", 1);
             }

@@ -110,7 +110,7 @@ int hash_destroy(hashtable_t *table)
     free(table->locks);
     free(table->bucket_sizes);
     free(table);
-    
+
     return 0;
 }
 /*---------------------------------------------------------------------------*/
@@ -121,18 +121,58 @@ int hash_insert(hashtable_t *table, const char *key, const char *value)
     rwlock_t *lock;
     unsigned int index = hash(key, table->hash_size);
 
-/*---------------------------------------------------------------------------*/
+    /*---------------------------------------------------------------------------*/
     /* edit here */
-    
+    lock = &table->locks[index];
+    if (rwlock_write_lock(lock) != 0)
+    {
+        return -1; // Lock acquisition failed
+    }
 
+    /* Check if key already exists */
+    node = table->buckets[index];
+    while (node)
+    {
+        if (strcmp(node->key, key) == 0)
+        {
+            rwlock_write_unlock(lock);
+            return 0; // Collision
+        }
+        node = node->next;
+    }
 
+    /* Create new node */
+    node = malloc(sizeof(node_t));
+    if (!node)
+    {
+        rwlock_write_unlock(lock);
+        return -1;
+    }
 
+    /* Duplicate key and value */
+    node->key = strdup(key);
+    node->value = strdup(value);
+    if (!node->key || !node->value)
+    {
+        free(node->key); // One might be NULL
+        free(node->value);
+        free(node);
+        rwlock_write_unlock(lock);
+        return -1;
+    }
 
+    node->key_size = strlen(key);
+    node->value_size = strlen(value);
 
+    /* Insert at head of bucket */
+    node->next = table->buckets[index];
+    table->buckets[index] = node;
+    table->bucket_sizes[index]++;
+    table->total_entries++;
 
+    rwlock_write_unlock(lock);
 
-    
-/*---------------------------------------------------------------------------*/
+    /*---------------------------------------------------------------------------*/
 
     /* inserted */
     return 1;
@@ -145,18 +185,30 @@ int hash_search(hashtable_t *table, const char *key, const char **value)
     rwlock_t *lock;
     unsigned int index = hash(key, table->hash_size);
 
-/*---------------------------------------------------------------------------*/
+    /*---------------------------------------------------------------------------*/
     /* edit here */
-    
+    lock = &table->locks[index];
+    if (rwlock_read_lock(lock) != 0)
+    {
+        return -1; // Lock acquisition failed
+    }
 
+    /* Search for key */
+    node = table->buckets[index];
+    while (node)
+    {
+        if (strcmp(node->key, key) == 0)
+        {
+            *value = node->value;
+            rwlock_read_unlock(lock);
+            return 1; // Found
+        }
+        node = node->next;
+    }
 
+    rwlock_read_unlock(lock);
 
-
-
-
-
-    
-/*---------------------------------------------------------------------------*/
+    /*---------------------------------------------------------------------------*/
 
     /* key not found */
     return 0;
@@ -170,18 +222,42 @@ int hash_update(hashtable_t *table, const char *key, const char *value)
     char *new_value;
     unsigned int index = hash(key, table->hash_size);
 
-/*---------------------------------------------------------------------------*/
+    /*---------------------------------------------------------------------------*/
     /* edit here */
-    
+    lock = &table->locks[index];
+    if (rwlock_write_lock(lock) != 0)
+    {
+        return -1; // Lock acquisition failed
+    }
 
+    /* Search for key */
+    node = table->buckets[index];
+    while (node)
+    {
+        if (strcmp(node->key, key) == 0)
+        {
+            /* Duplicate new value */
+            new_value = strdup(value);
+            if (!new_value)
+            {
+                rwlock_write_unlock(lock);
+                return -1;
+            }
 
+            /* Free old value and update */
+            free(node->value);
+            node->value = new_value;
+            node->value_size = strlen(value);
 
+            rwlock_write_unlock(lock);
+            return 1; // Updated
+        }
+        node = node->next;
+    }
 
+    rwlock_write_unlock(lock);
 
-
-
-    
-/*---------------------------------------------------------------------------*/
+    /*---------------------------------------------------------------------------*/
 
     /* key not found */
     return 0;
@@ -194,18 +270,45 @@ int hash_delete(hashtable_t *table, const char *key)
     rwlock_t *lock;
     unsigned int index = hash(key, table->hash_size);
 
-/*---------------------------------------------------------------------------*/
+    /*---------------------------------------------------------------------------*/
     /* edit here */
-    
+    lock = &table->locks[index];
+    if (rwlock_write_lock(lock) != 0)
+    {
+        return -1; // Lock acquisition failed
+    }
 
+    /* Search for key */
+    prev = NULL;
+    node = table->buckets[index];
+    while (node)
+    {
+        if (strcmp(node->key, key) == 0)
+        {
+            /* Update bucket list */
+            if (prev)
+                prev->next = node->next;
+            else
+                table->buckets[index] = node->next;
 
+            /* Free node */
+            free(node->key);
+            free(node->value);
+            free(node);
 
+            table->bucket_sizes[index]--;
+            table->total_entries--;
 
+            rwlock_write_unlock(lock);
+            return 1; // Deleted
+        }
+        prev = node;
+        node = node->next;
+    }
 
+    rwlock_write_unlock(lock);
 
-
-    
-/*---------------------------------------------------------------------------*/
+    /*---------------------------------------------------------------------------*/
 
     /* key not found */
     return 0;
@@ -234,7 +337,8 @@ void hash_dump(hashtable_t *table)
         while (node)
         {
             printf("    Key:   %s\n"
-                   "    Value: %s\n", node->key, node->value);
+                   "    Value: %s\n",
+                   node->key, node->value);
             node = node->next;
         }
     }
