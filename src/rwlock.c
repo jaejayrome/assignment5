@@ -80,16 +80,35 @@ int rwlock_init(rwlock_t *rw, int delay)
 int rwlock_read_lock(rwlock_t *rw)
 {
     TRACE_PRINT();
-/*---------------------------------------------------------------------------*/
+    /*---------------------------------------------------------------------------*/
     /* edit here */
+    int ret;
 
+    ret = pthread_mutex_lock(&rw->lock);
+    if (ret != 0)
+    {
+        return -1;
+    }
 
+    while (rw->write_count > 0)
+    {
+        ret = pthread_cond_wait(&rw->readers, &rw->lock);
+        if (ret != 0)
+        {
+            pthread_mutex_unlock(&rw->lock);
+            return -1;
+        }
+    }
 
+    rw->read_count++;
 
+    ret = pthread_mutex_unlock(&rw->lock);
+    if (ret != 0)
+    {
+        return -1;
+    }
 
-
-
-/*---------------------------------------------------------------------------*/
+    /*---------------------------------------------------------------------------*/
     return 0;
 }
 /*---------------------------------------------------------------------------*/
@@ -97,32 +116,75 @@ int rwlock_read_unlock(rwlock_t *rw)
 {
     sleep(rw->delay);
     TRACE_PRINT();
-/*---------------------------------------------------------------------------*/
+    /*---------------------------------------------------------------------------*/
     /* edit here */
+    int ret;
 
+    ret = pthread_mutex_lock(&rw->lock);
+    if (ret != 0)
+    {
+        return -1;
+    }
 
+    rw->read_count--;
 
+    if (rw->read_count == 0)
+    {
+        ret = pthread_cond_signal(&rw->writers);
+        if (ret != 0)
+        {
+            pthread_mutex_unlock(&rw->lock);
+            return -1;
+        }
+    }
 
+    ret = pthread_mutex_unlock(&rw->lock);
+    if (ret != 0)
+    {
+        return -1;
+    }
 
-
-
-/*---------------------------------------------------------------------------*/
+    /*---------------------------------------------------------------------------*/
     return 0;
 }
 /*---------------------------------------------------------------------------*/
 int rwlock_write_lock(rwlock_t *rw)
 {
     TRACE_PRINT();
-/*---------------------------------------------------------------------------*/
+    /*---------------------------------------------------------------------------*/
     /* edit here */
+    int ret;
 
+    ret = pthread_mutex_lock(&rw->lock);
+    if (ret != 0)
+    {
+        return -1;
+    }
 
+    rw->writer_ring[rw->writer_ring_tail] = pthread_self();
+    rw->writer_ring_tail = (rw->writer_ring_tail + 1) % WRITER_RING_SIZE;
 
+    while (rw->read_count > 0 || rw->write_count > 0 ||
+           pthread_self() != rw->writer_ring[rw->writer_ring_head])
+    {
+        ret = pthread_cond_wait(&rw->writers, &rw->lock);
+        if (ret != 0)
+        {
+            pthread_mutex_unlock(&rw->lock);
+            return -1;
+        }
+    }
 
+    rw->write_count++;
+    rw->writer_ring_head = (rw->writer_ring_head + 1) % WRITER_RING_SIZE;
 
+    ret = pthread_mutex_unlock(&rw->lock);
+    if (ret != 0)
+    {
+        return -1;
+    }
 
-
-/*---------------------------------------------------------------------------*/
+    /*---------------------------------------------------------------------------*/
     return 0;
 }
 /*---------------------------------------------------------------------------*/
@@ -130,16 +192,39 @@ int rwlock_write_unlock(rwlock_t *rw)
 {
     sleep(rw->delay);
     TRACE_PRINT();
-/*---------------------------------------------------------------------------*/
+    /*---------------------------------------------------------------------------*/
     /* edit here */
+    int ret;
 
+    ret = pthread_mutex_lock(&rw->lock);
+    if (ret != 0)
+    {
+        return -1;
+    }
 
+    rw->write_count--;
 
+    ret = pthread_cond_broadcast(&rw->readers);
+    if (ret != 0)
+    {
+        pthread_mutex_unlock(&rw->lock);
+        return -1;
+    }
 
+    ret = pthread_cond_signal(&rw->writers);
+    if (ret != 0)
+    {
+        pthread_mutex_unlock(&rw->lock);
+        return -1;
+    }
 
+    ret = pthread_mutex_unlock(&rw->lock);
+    if (ret != 0)
+    {
+        return -1;
+    }
 
-
-/*---------------------------------------------------------------------------*/
+    /*---------------------------------------------------------------------------*/
     return 0;
 }
 /*---------------------------------------------------------------------------*/
