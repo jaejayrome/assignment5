@@ -106,12 +106,17 @@ int main(int argc, char *argv[])
     {
         char line[BUFFER_SIZE];
         printf("Connected to %s:%d\n", ip, port);
-        printf("Enter command:\n");
 
-        while (fgets(line, sizeof(line), stdin) != NULL)
+        while (1)
         {
-            if (strlen(line) <= 1)
-                break; // Empty line
+            printf("Enter command: ");
+            fflush(stdout);
+
+            if (fgets(line, sizeof(line), stdin) == NULL)
+                break;
+
+            if (line[0] == 'c' && (line[1] == '\n' || line[1] == '\0'))
+                break;
 
             write(sockfd, line, strlen(line));
 
@@ -120,7 +125,7 @@ int main(int argc, char *argv[])
             if (bytes_read > 0)
             {
                 response[bytes_read] = '\0';
-                printf("%s", response);
+                printf("Server reply: %s", response);
             }
         }
     }
