@@ -90,7 +90,8 @@ int rwlock_read_lock(rwlock_t *rw)
         return -1;
     }
 
-    while (rw->write_count > 0)
+    while (rw->write_count > 0 ||
+           (rw->writer_ring_head != rw->writer_ring_tail))
     {
         ret = pthread_cond_wait(&rw->readers, &rw->lock);
         if (ret != 0)
@@ -127,8 +128,9 @@ int rwlock_read_unlock(rwlock_t *rw)
 
     rw->read_count--;
 
-    /* If this is the last reader, signal writers */
-    if (rw->read_count == 0)
+    // If this is the last reader and there are waiting writers
+    if (rw->read_count == 0 &&
+        rw->writer_ring_head != rw->writer_ring_tail)
     {
         ret = pthread_cond_signal(&rw->writers);
         if (ret != 0)
@@ -143,7 +145,6 @@ int rwlock_read_unlock(rwlock_t *rw)
     {
         return -1;
     }
-
     /*---------------------------------------------------------------------------*/
     return 0;
 }

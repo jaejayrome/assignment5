@@ -61,7 +61,6 @@ void *handle_client(void *arg)
         {
             if (errno == EINTR || errno == EINVAL || errno == EBADF)
             {
-                /* Check if we're shutting down */
                 if (g_shutdown)
                     break;
                 continue;
@@ -70,36 +69,42 @@ void *handle_client(void *arg)
             break;
         }
 
-        /* Set socket timeout */
-        struct timeval tv;
-        tv.tv_sec = 1; // 1 second timeout
-        tv.tv_usec = 0;
-        if (setsockopt(client_fd, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof tv) < 0)
-        {
-            perror("setsockopt failed");
-            close(client_fd);
-            continue;
-        }
+        // Set socket to non-blocking mode
+        int flags = fcntl(client_fd, F_GETFL, 0);
+        fcntl(client_fd, F_SETFL, flags | O_NONBLOCK);
 
-        /* Handle client requests */
-        while (!g_shutdown && (n = read(client_fd, rbuf, BUFFER_SIZE)) > 0)
+        // Handle client requests
+        while (!g_shutdown)
         {
-            rbuf[n] = '\0';
-            resp = skvs_serve(ctx, rbuf, n);
-            if (resp)
+            n = read(client_fd, rbuf, BUFFER_SIZE);
+
+            if (n > 0)
             {
-                write(client_fd, resp, strlen(resp));
-                write(client_fd, "\n", 1);
+                rbuf[n] = '\0';
+                resp = skvs_serve(ctx, rbuf, n);
+                if (resp)
+                {
+                    write(client_fd, resp, strlen(resp));
+                    write(client_fd, "\n", 1);
+                }
             }
-        }
-
-        if (n == 0 || (n == -1 && errno == EAGAIN))
-        {
-            printf("Connection closed by client\n");
-        }
-        else if (n < 0)
-        {
-            perror("read error");
+            else if (n == -1)
+            {
+                if (errno == EAGAIN || errno == EWOULDBLOCK)
+                {
+                    usleep(1000); // 1ms sleep
+                    continue;
+                }
+                // Real error occurred
+                perror("read error");
+                break;
+            }
+            else if (n == 0)
+            {
+                // Client closed connection
+                printf("Connection closed by client\n");
+                break;
+            }
         }
 
         close(client_fd);
