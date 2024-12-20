@@ -1,7 +1,7 @@
 /*---------------------------------------------------------------------------*/
 /* server.c                                                                  */
 /* Author: Junghan Yoon, KyoungSoo Park                                      */
-/* Modified by: (Your Name)                                                  */
+/* Modified by: Jerome Goh Zhi Sheng                                              */
 /*---------------------------------------------------------------------------*/
 #define _GNU_SOURCE
 #include <stdio.h>
