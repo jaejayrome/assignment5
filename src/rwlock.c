@@ -84,8 +84,6 @@ int rwlock_read_lock(rwlock_t *rw)
     /* edit here */
     int ret;
 
-    sleep(rw->delay);
-
     ret = pthread_mutex_lock(&rw->lock);
     if (ret != 0)
     {
@@ -109,7 +107,6 @@ int rwlock_read_lock(rwlock_t *rw)
     {
         return -1;
     }
-
     /*---------------------------------------------------------------------------*/
     return 0;
 }
@@ -130,6 +127,7 @@ int rwlock_read_unlock(rwlock_t *rw)
 
     rw->read_count--;
 
+    /* If this is the last reader, signal writers */
     if (rw->read_count == 0)
     {
         ret = pthread_cond_signal(&rw->writers);
@@ -165,8 +163,6 @@ int rwlock_write_lock(rwlock_t *rw)
 
     rw->writer_ring[rw->writer_ring_tail] = pthread_self();
     rw->writer_ring_tail = (rw->writer_ring_tail + 1) % WRITER_RING_SIZE;
-
-    sleep(rw->delay);
 
     while (rw->read_count > 0 || rw->write_count > 0 ||
            pthread_self() != rw->writer_ring[rw->writer_ring_head])

@@ -16,6 +16,7 @@
 #include <sys/time.h>
 #include "common.h"
 #include "skvslib.h"
+#include "fcntl.h"
 /*---------------------------------------------------------------------------*/
 struct thread_args
 {
@@ -69,13 +70,21 @@ void *handle_client(void *arg)
             break;
         }
 
+        /* Set socket timeout */
+        struct timeval tv;
+        tv.tv_sec = 1; // 1 second timeout
+        tv.tv_usec = 0;
+        if (setsockopt(client_fd, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof tv) < 0)
+        {
+            perror("setsockopt failed");
+            close(client_fd);
+            continue;
+        }
+
         /* Handle client requests */
         while (!g_shutdown && (n = read(client_fd, rbuf, BUFFER_SIZE)) > 0)
         {
-            /* Null terminate the received data */
             rbuf[n] = '\0';
-
-            /* Process the request using skvs_serve */
             resp = skvs_serve(ctx, rbuf, n);
             if (resp)
             {
@@ -84,7 +93,15 @@ void *handle_client(void *arg)
             }
         }
 
-        printf("Connection closed by client\n");
+        if (n == 0 || (n == -1 && errno == EAGAIN))
+        {
+            printf("Connection closed by client\n");
+        }
+        else if (n < 0)
+        {
+            perror("read error");
+        }
+
         close(client_fd);
     }
     /*---------------------------------------------------------------------------*/
