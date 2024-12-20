@@ -90,8 +90,7 @@ int rwlock_read_lock(rwlock_t *rw)
         return -1;
     }
 
-    while (rw->write_count > 0 ||
-           (rw->writer_ring_head != rw->writer_ring_tail))
+    while (rw->write_count > 0)
     {
         ret = pthread_cond_wait(&rw->readers, &rw->lock);
         if (ret != 0)
@@ -162,6 +161,7 @@ int rwlock_write_lock(rwlock_t *rw)
         return -1;
     }
 
+    // Add ourselves to the writer queue
     rw->writer_ring[rw->writer_ring_tail] = pthread_self();
     rw->writer_ring_tail = (rw->writer_ring_tail + 1) % WRITER_RING_SIZE;
 
@@ -204,16 +204,16 @@ int rwlock_write_unlock(rwlock_t *rw)
 
     rw->write_count--;
 
-    if (rw->read_count > 0)
+    // Wake up all waiting readers first (reader priority)
+    ret = pthread_cond_broadcast(&rw->readers);
+    if (ret != 0)
     {
-        ret = pthread_cond_broadcast(&rw->readers);
-        if (ret != 0)
-        {
-            pthread_mutex_unlock(&rw->lock);
-            return -1;
-        }
+        pthread_mutex_unlock(&rw->lock);
+        return -1;
     }
-    else
+
+    // If no readers are waiting, wake up the next writer
+    if (rw->writer_ring_head != rw->writer_ring_tail)
     {
         ret = pthread_cond_signal(&rw->writers);
         if (ret != 0)

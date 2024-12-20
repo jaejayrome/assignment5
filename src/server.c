@@ -26,7 +26,7 @@ struct thread_args
 
     /*---------------------------------------------------------------------------*/
     /* free to use */
-
+    int delay;
     /*---------------------------------------------------------------------------*/
 };
 /*---------------------------------------------------------------------------*/
@@ -47,9 +47,9 @@ void *handle_client(void *arg)
     char rbuf[BUFFER_SIZE];
     ssize_t n;
     const char *resp;
+    struct timeval tv;
     /*---------------------------------------------------------------------------*/
 
-    free(args);
     printf("%dth worker ready\n", idx);
 
     /*---------------------------------------------------------------------------*/
@@ -69,14 +69,15 @@ void *handle_client(void *arg)
             break;
         }
 
-        // Set socket to non-blocking mode
-        int flags = fcntl(client_fd, F_GETFL, 0);
-        fcntl(client_fd, F_SETFL, flags | O_NONBLOCK);
+        /* Set socket timeout */
+        tv.tv_sec = 1; // 1 second timeout
+        tv.tv_usec = 0;
+        setsockopt(client_fd, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof tv);
 
-        // Handle client requests
+        /* Handle client requests */
         while (!g_shutdown)
         {
-            n = read(client_fd, rbuf, BUFFER_SIZE);
+            n = read(client_fd, rbuf, BUFFER_SIZE - 1);
 
             if (n > 0)
             {
@@ -86,27 +87,20 @@ void *handle_client(void *arg)
                 {
                     write(client_fd, resp, strlen(resp));
                     write(client_fd, "\n", 1);
+
+                    if (args->delay > 0)
+                    {
+                        sleep(args->delay);
+                    }
                 }
             }
-            else if (n == -1)
+            else if (n == 0 || (errno != EAGAIN && errno != EWOULDBLOCK))
             {
-                if (errno == EAGAIN || errno == EWOULDBLOCK)
-                {
-                    usleep(1000); // 1ms sleep
-                    continue;
-                }
-                // Real error occurred
-                perror("read error");
-                break;
-            }
-            else if (n == 0)
-            {
-                // Client closed connection
-                printf("Connection closed by client\n");
                 break;
             }
         }
 
+        printf("Connection closed by client\n");
         close(client_fd);
     }
     /*---------------------------------------------------------------------------*/
@@ -136,6 +130,7 @@ int main(int argc, char *argv[])
     pthread_t *workers;
     struct skvs_ctx *ctx;
     int i, yes = 1;
+    pthread_mutex_t *io_mutex;
     /*---------------------------------------------------------------------------*/
 
     /* parse command line options */
@@ -185,6 +180,23 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
 
+    /* Create IO mutex for synchronized printing */
+    io_mutex = malloc(sizeof(pthread_mutex_t));
+    if (!io_mutex)
+    {
+        perror("malloc failed for io_mutex");
+        skvs_destroy(ctx, 1);
+        exit(EXIT_FAILURE);
+    }
+
+    if (pthread_mutex_init(io_mutex, NULL) != 0)
+    {
+        perror("mutex init failed");
+        free(io_mutex);
+        skvs_destroy(ctx, 1);
+        exit(EXIT_FAILURE);
+    }
+
     /* Block SIGINT initially */
     sigset_t mask;
     sigemptyset(&mask);
@@ -192,6 +204,8 @@ int main(int argc, char *argv[])
     if (sigprocmask(SIG_BLOCK, &mask, NULL) == -1)
     {
         perror("sigprocmask");
+        pthread_mutex_destroy(io_mutex);
+        free(io_mutex);
         skvs_destroy(ctx, 1);
         exit(EXIT_FAILURE);
     }
@@ -201,6 +215,8 @@ int main(int argc, char *argv[])
     if (listenfd < 0)
     {
         perror("socket creation failed");
+        pthread_mutex_destroy(io_mutex);
+        free(io_mutex);
         skvs_destroy(ctx, 1);
         exit(EXIT_FAILURE);
     }
@@ -209,6 +225,8 @@ int main(int argc, char *argv[])
     if (setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) == -1)
     {
         perror("setsockopt");
+        pthread_mutex_destroy(io_mutex);
+        free(io_mutex);
         skvs_destroy(ctx, 1);
         exit(EXIT_FAILURE);
     }
@@ -223,6 +241,8 @@ int main(int argc, char *argv[])
     if (bind(listenfd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0)
     {
         perror("bind failed");
+        pthread_mutex_destroy(io_mutex);
+        free(io_mutex);
         skvs_destroy(ctx, 1);
         exit(EXIT_FAILURE);
     }
@@ -231,6 +251,8 @@ int main(int argc, char *argv[])
     if (listen(listenfd, NUM_BACKLOG) < 0)
     {
         perror("listen failed");
+        pthread_mutex_destroy(io_mutex);
+        free(io_mutex);
         skvs_destroy(ctx, 1);
         exit(EXIT_FAILURE);
     }
@@ -244,11 +266,13 @@ int main(int argc, char *argv[])
     if (!workers)
     {
         perror("malloc failed");
+        pthread_mutex_destroy(io_mutex);
+        free(io_mutex);
         skvs_destroy(ctx, 1);
         exit(EXIT_FAILURE);
     }
 
-    /* Start worker threads (SIGINT remains blocked in threads) */
+    /* Start worker threads */
     for (i = 0; i < num_threads; i++)
     {
         struct thread_args *args = malloc(sizeof(struct thread_args));
@@ -262,6 +286,7 @@ int main(int argc, char *argv[])
         args->listenfd = listenfd;
         args->idx = i;
         args->ctx = ctx;
+        args->delay = delay;
 
         if (pthread_create(&workers[i], NULL, handle_client, args) != 0)
         {
@@ -281,6 +306,8 @@ int main(int argc, char *argv[])
     if (sigaction(SIGINT, &sa, NULL) == -1)
     {
         perror("sigaction");
+        pthread_mutex_destroy(io_mutex);
+        free(io_mutex);
         skvs_destroy(ctx, 1);
         exit(EXIT_FAILURE);
     }
@@ -289,6 +316,8 @@ int main(int argc, char *argv[])
     if (sigprocmask(SIG_UNBLOCK, &mask, NULL) == -1)
     {
         perror("sigprocmask");
+        pthread_mutex_destroy(io_mutex);
+        free(io_mutex);
         skvs_destroy(ctx, 1);
         exit(EXIT_FAILURE);
     }
@@ -315,6 +344,8 @@ int main(int argc, char *argv[])
 
     close(listenfd);
     free(workers);
+    pthread_mutex_destroy(io_mutex);
+    free(io_mutex);
     skvs_destroy(ctx, 1);
     /*---------------------------------------------------------------------------*/
 
